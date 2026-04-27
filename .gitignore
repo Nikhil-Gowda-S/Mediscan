@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Streamlit logs
+streamlit_log.txt
+
+# Temp / Test files
+test_libs.py
+test_imports.py
+App/test_imports.py
+check_syntax.py
+take_screenshot.py
+demo_screenshot.png
+referrence.txt
