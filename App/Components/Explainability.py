@@ -29,7 +29,7 @@ class GradCAMOverlay:
             original = np.array(Image.open(original_image).convert("RGB"))
 
         H, W = original.shape[:2]
-
+#snjs
         attr = attributions.detach().cpu()
         if attr.ndim == 4:
             attr = attr[0].mean(0)
