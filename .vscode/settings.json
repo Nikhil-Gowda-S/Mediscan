@@ -1,0 +1,10 @@
+{
+  "python.analysis.extraPaths": ["."],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.reportMissingImports": "none",
+  "python.analysis.reportMissingModuleSource": "none",
+  "python.analysis.reportMissingTypeStubs": "none",
+  "python.analysis.reportUnknownMemberType": "none",
+  "python.analysis.reportUnknownVariableType": "none",
+  "python.analysis.reportUnknownArgumentType": "none"
+}
