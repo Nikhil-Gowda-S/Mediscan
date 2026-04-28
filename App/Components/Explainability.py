@@ -27,17 +27,19 @@ class GradCAMOverlay:
 
         try:
             model.zero_grad()
-            img = image_tensor.float().clone()
+            img = image_tensor.float().clone().detach().requires_grad_(True)
             
-            # Full forward pass through DenseNet manually
-            features_out = model.features(img)
-            pooled = F.adaptive_avg_pool2d(features_out, (1, 1))
-            flat = torch.flatten(pooled, 1)
-            logits = model.classifier(flat)
+            # Must enable grad even if caller used no_grad context
+            with torch.enable_grad():
+                # Full forward pass through DenseNet manually
+                features_out = model.features(img)
+                pooled = F.adaptive_avg_pool2d(features_out, (1, 1))
+                flat = torch.flatten(pooled, 1)
+                logits = model.classifier(flat)
 
-            # Backward on target class score
-            score = logits[0, target_class % logits.shape[1]]
-            score.backward()
+                # Backward on target class score
+                score = logits[0, target_class % logits.shape[1]]
+                score.backward()
 
             if not gradients or not activations:
                 raise RuntimeError("Hooks did not capture gradients or activations")

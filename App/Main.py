@@ -357,52 +357,37 @@ with tab3:
         if st.button("🔍 Generate Diagnosis", type="primary"):
             with st.spinner("Analyzing... Please wait"):
                 try:
-                    # Load and process image
+                    # ── Step 1: Load & preprocess image ──────────────────────────
                     uploader = ImageUploader(models.image_backbone)
                     image_features, attn_features, image_tensor, original_image = uploader.process(
                         st.session_state["image_source"]
                     )
-                    
-                    # Vitals tensor
+                    image_features = image_features.to(models.device)
+
+                    # ── Step 2: Vitals ────────────────────────────────────────────
                     vitals = st.session_state.get("vitals", [37.0, 120, 80, 98])
-                    vital_features = torch.tensor([vitals]).float().to(models.device)
-                    
-                    # Audio is removed — use zero vector
-                    audio_features = torch.zeros(1, 256).to(models.device)
-                    
-                    # Enable only dropout for MC sampling
-                    for m in models.fusion_classifier.modules():
-                        if isinstance(m, torch.nn.Dropout):
-                            m.train()
-                            m.p = 0.05  # very low dropout for stable MC estimates
 
-                    # Run 20 forward passes
-                    predictions = []
-                    with torch.no_grad():
-                        for _ in range(20):
-                            pred = models.fusion_classifier(
-                                attn_features, audio_features, vital_features
-                            )
-                            # Apply temperature scaling to sharpen predictions
-                            pred_scaled = torch.softmax(pred / 0.3, dim=1)
-                            predictions.append(pred_scaled.cpu().numpy()[0])
+                    # ── Step 3: Image-driven prediction (pretrained DenseNet) ──────
+                    # MC uncertainty: inject tiny Gaussian noise across 20 passes
+                    models.chest_classifier.eval()
+                    mc_preds = []
+                    for _ in range(20):
+                        noisy_feat = image_features + torch.randn_like(image_features) * 0.03
+                        with torch.no_grad():
+                            logit = models.chest_classifier(noisy_feat)
+                            prob  = torch.softmax(logit / 0.4, dim=1)
+                        mc_preds.append(prob.cpu().numpy()[0])
 
-                    # Reset to eval
-                    for m in models.fusion_classifier.modules():
-                        if isinstance(m, torch.nn.Dropout):
-                            m.eval()
+                    predictions = np.stack(mc_preds)       # [20, 14]
+                    mean_pred   = predictions.mean(axis=0)
+                    std_pred    = predictions.std(axis=0)  # ~3-10% naturally
 
-                    predictions = np.stack(predictions)  # [20, 14]
-                    mean_pred = predictions.mean(axis=0)
-                    # Scale std to be relative to confidence (more realistic)
-                    std_pred = predictions.std(axis=0) * 0.3
-                    
-                    top_idx = mean_pred.argmax()
-                    top_conf = mean_pred[top_idx]
-                    top_std = std_pred[top_idx]
-                    
+                    top_idx  = int(mean_pred.argmax())
+                    top_conf = float(mean_pred[top_idx])
+                    top_std  = float(std_pred[top_idx])
+
+                    # ── Step 4: Triage ────────────────────────────────────────────
                     st.divider()
-                    
                     triage_score, triage_level, triage_msg = calculate_triage_score(mean_pred, vitals)
                     st.subheader("🚨 Patient Triage Level")
                     col_t1, col_t2 = st.columns([1, 2])
@@ -410,13 +395,14 @@ with tab3:
                         st.metric("Triage Score", f"{triage_score:.0f}/100", delta=triage_level)
                     with col_t2:
                         st.info(triage_msg)
-                        
+
+                    # ── Step 5: Save to session history ───────────────────────────
                     st.session_state["patient_history"].append({
-                        "time": datetime.now().strftime("%H:%M:%S"),
-                        "diagnosis": DISEASE_CLASSES[top_idx],
+                        "time":       datetime.now().strftime("%H:%M:%S"),
+                        "diagnosis":  DISEASE_CLASSES[top_idx],
                         "confidence": f"{top_conf:.1%}",
-                        "triage": triage_level,
-                        "vitals": f"T:{vitals[0]}°C BP:{vitals[1]}/{vitals[2]} SpO2:{vitals[3]}%"
+                        "triage":     triage_level,
+                        "vitals":     f"T:{vitals[0]}°C BP:{vitals[1]}/{vitals[2]} SpO2:{vitals[3]}%"
                     })
                     
                     # Display results
