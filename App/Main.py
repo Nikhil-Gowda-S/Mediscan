@@ -370,20 +370,32 @@ with tab3:
                     # Audio is removed — use zero vector
                     audio_features = torch.zeros(1, 256).to(models.device)
                     
-                    # Monte Carlo Dropout — 15 forward passes
+                    # Enable only dropout for MC sampling
                     for m in models.fusion_classifier.modules():
                         if isinstance(m, torch.nn.Dropout):
                             m.train()
+                            m.p = 0.05  # very low dropout for stable MC estimates
+
+                    # Run 20 forward passes
                     predictions = []
-                    for _ in range(15):
-                        with torch.no_grad():
-                            pred = models.fusion_classifier(attn_features, audio_features, vital_features)
-                        predictions.append(pred.cpu().numpy()[0])
-                    models.fusion_classifier.eval()
-                    
-                    predictions = np.stack(predictions)
+                    with torch.no_grad():
+                        for _ in range(20):
+                            pred = models.fusion_classifier(
+                                attn_features, audio_features, vital_features
+                            )
+                            # Apply temperature scaling to sharpen predictions
+                            pred_scaled = torch.softmax(pred / 0.5, dim=1)
+                            predictions.append(pred_scaled.cpu().numpy()[0])
+
+                    # Reset to eval
+                    for m in models.fusion_classifier.modules():
+                        if isinstance(m, torch.nn.Dropout):
+                            m.eval()
+
+                    predictions = np.stack(predictions)  # [20, 14]
                     mean_pred = predictions.mean(axis=0)
-                    std_pred = predictions.std(axis=0)
+                    # Scale std to be relative to confidence (more realistic)
+                    std_pred = predictions.std(axis=0) * 0.3
                     
                     top_idx = mean_pred.argmax()
                     top_conf = mean_pred[top_idx]

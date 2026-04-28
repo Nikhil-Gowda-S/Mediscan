@@ -13,7 +13,7 @@ class MediScanReport(FPDF):
         self.set_font('Helvetica', 'B', 16)
         self.set_fill_color(25, 55, 109)
         self.set_text_color(255, 255, 255)
-        self.cell(0, 14, '  MediScan AI — Diagnostic Report', fill=True, ln=True)
+        self.cell(0, 14, '  MediScan AI - Diagnostic Report', fill=True, ln=True)
         self.set_text_color(0, 0, 0)
         self.ln(4)
 
@@ -21,7 +21,7 @@ class MediScanReport(FPDF):
         self.set_y(-15)
         self.set_font('Helvetica', 'I', 8)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 10, 'FOR RESEARCH AND DEMONSTRATION PURPOSES ONLY — NOT FOR CLINICAL USE', align='C')
+        self.cell(0, 10, 'FOR RESEARCH AND DEMONSTRATION PURPOSES ONLY - NOT FOR CLINICAL USE', align='C')
 
 def generate_pdf_report(mean_pred, std_pred, vitals, patient_name="Anonymous"):
     pdf = MediScanReport()
@@ -72,7 +72,7 @@ def generate_pdf_report(mean_pred, std_pred, vitals, patient_name="Anonymous"):
     
     if top_std > 0.15:
         pdf.set_text_color(180, 0, 0)
-        pdf.cell(0, 7, '⚠ High uncertainty — specialist review strongly recommended', ln=True)
+        pdf.cell(0, 7, '⚠ High uncertainty - specialist review strongly recommended', ln=True)
         pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
