@@ -384,7 +384,7 @@ with tab3:
                                 attn_features, audio_features, vital_features
                             )
                             # Apply temperature scaling to sharpen predictions
-                            pred_scaled = torch.softmax(pred / 0.5, dim=1)
+                            pred_scaled = torch.softmax(pred / 0.3, dim=1)
                             predictions.append(pred_scaled.cpu().numpy()[0])
 
                     # Reset to eval
