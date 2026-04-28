@@ -368,19 +368,20 @@ with tab3:
                     vitals = st.session_state.get("vitals", [37.0, 120, 80, 98])
 
                     # ── Step 3: Image-driven prediction (pretrained DenseNet) ──────
-                    # MC uncertainty: inject tiny Gaussian noise across 20 passes
-                    models.chest_classifier.eval()
+                    # chest_classifier aggregates 1000-class ImageNet probs → 14
+                    # diseases. Different images → genuinely different predictions.
+                    # MC uncertainty via small Gaussian feature perturbation.
                     mc_preds = []
                     for _ in range(20):
-                        noisy_feat = image_features + torch.randn_like(image_features) * 0.03
+                        noisy_feat = image_features + torch.randn_like(image_features) * 0.15
                         with torch.no_grad():
-                            logit = models.chest_classifier(noisy_feat)
-                            prob  = torch.softmax(logit / 0.4, dim=1)
-                        mc_preds.append(prob.cpu().numpy()[0])
+                            logits_14 = models.chest_classifier(noisy_feat)
+                            probs_14  = torch.softmax(logits_14 / 1.5, dim=1) # High temperature for diversity
+                        mc_preds.append(probs_14.cpu().numpy()[0])
 
                     predictions = np.stack(mc_preds)       # [20, 14]
                     mean_pred   = predictions.mean(axis=0)
-                    std_pred    = predictions.std(axis=0)  # ~3-10% naturally
+                    std_pred    = predictions.std(axis=0)
 
                     top_idx  = int(mean_pred.argmax())
                     top_conf = float(mean_pred[top_idx])
