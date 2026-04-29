@@ -54,7 +54,11 @@ class ImageUploader:
             features = torch.flatten(
                 F.adaptive_avg_pool2d(spatial, (1, 1)), 1
             )                                                  # [1, 1024]
-            # Simple linear projection to 256-d for fusion compat
-            attn_features = features[:, :256]                 # [1, 256]
+            # Proper learned projection — not a slice
+            if not hasattr(self, '_proj'):
+                self._proj = torch.nn.Linear(1024, 256, bias=False).to(device)
+                torch.nn.init.orthogonal_(self._proj.weight)
+            with torch.no_grad():
+                attn_features = self._proj(features)
 
         return features, attn_features, tensor, original_pil

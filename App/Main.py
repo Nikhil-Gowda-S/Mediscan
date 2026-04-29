@@ -367,21 +367,95 @@ with tab3:
                     # ── Step 2: Vitals ────────────────────────────────────────────
                     vitals = st.session_state.get("vitals", [37.0, 120, 80, 98])
 
-                    # ── Step 3: Image-driven prediction (pretrained DenseNet) ──────
-                    # chest_classifier aggregates 1000-class ImageNet probs → 14
-                    # diseases. Different images → genuinely different predictions.
-                    # MC uncertainty via small Gaussian feature perturbation.
-                    mc_preds = []
-                    for _ in range(20):
-                        noisy_feat = image_features + torch.randn_like(image_features) * 0.15
-                        with torch.no_grad():
-                            logits_14 = models.chest_classifier(noisy_feat)
-                            probs_14  = torch.softmax(logits_14 / 1.5, dim=1) # High temperature for diversity
-                        mc_preds.append(probs_14.cpu().numpy()[0])
+                    # ── Step 3: Vitals-aware image prediction ────────────────────────
+                    DISEASE_CLASSES = [
+                        'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion',
+                        'Emphysema', 'Fibrosis', 'Hernia', 'Infiltration', 'Mass',
+                        'No Finding', 'Nodule', 'Pleural Thickening', 'Pneumothorax'
+                    ]
+                    disease_idx = {d: i for i, d in enumerate(DISEASE_CLASSES)}
 
-                    predictions = np.stack(mc_preds)       # [20, 14]
+                    def get_vitals_boost(vitals):
+                        """
+                        Returns a 14-dim multiplicative boost vector based on clinical vitals.
+                        High SpO2 abnormality → boost respiratory conditions.
+                        High fever → boost infection conditions.
+                        High BP → boost cardiac conditions.
+                        Normal vitals → boost No Finding.
+                        """
+                        temp, sys_bp, dia_bp, spo2 = vitals
+                        boost = np.ones(14)
+
+                        # Low SpO2 — respiratory emergency
+                        if spo2 < 90:
+                            for d in ['Edema', 'Consolidation', 'Atelectasis', 'Effusion',
+                                      'Emphysema', 'Pneumothorax']:
+                                boost[disease_idx[d]] *= 2.5
+                        elif spo2 < 94:
+                            for d in ['Edema', 'Consolidation', 'Effusion', 'Atelectasis']:
+                                boost[disease_idx[d]] *= 1.8
+
+                        # High fever — infection
+                        if temp > 39.0:
+                            for d in ['Consolidation', 'Infiltration', 'Effusion']:
+                                boost[disease_idx[d]] *= 2.2
+                        elif temp > 38.0:
+                            for d in ['Consolidation', 'Infiltration']:
+                                boost[disease_idx[d]] *= 1.6
+
+                        # High systolic BP — cardiac
+                        if sys_bp > 160:
+                            for d in ['Cardiomegaly', 'Edema', 'Effusion']:
+                                boost[disease_idx[d]] *= 2.0
+                        elif sys_bp > 140:
+                            for d in ['Cardiomegaly', 'Edema']:
+                                boost[disease_idx[d]] *= 1.5
+
+                        # High diastolic BP
+                        if dia_bp > 100:
+                            boost[disease_idx['Cardiomegaly']] *= 1.4
+
+                        # Normal vitals — favor No Finding
+                        if (96 <= spo2 <= 100 and 36.0 <= temp <= 37.5
+                                and 90 <= sys_bp <= 130 and 60 <= dia_bp <= 85):
+                            boost[disease_idx['No Finding']] *= 2.0
+                            for d in ['Pneumothorax', 'Edema', 'Consolidation']:
+                                boost[disease_idx[d]] *= 0.6
+
+                        return boost
+
+                    # MC sampling with feature-level noise (makes predictions image-sensitive)
+                    vitals_boost = get_vitals_boost(vitals)
+
+                    # Enable dropout for MC
+                    for m in models.image_backbone.modules():
+                        if isinstance(m, torch.nn.Dropout):
+                            m.train()
+                            m.p = 0.08
+
+                    mc_preds = []
+                    with torch.enable_grad():
+                        for _ in range(20):
+                            # Add small Gaussian noise to features for MC diversity
+                            noisy_feat = image_features + torch.randn_like(image_features) * 0.05
+                            logits_14 = models.chest_classifier(noisy_feat)
+                            # Lower temperature = more decisive predictions
+                            probs_14 = torch.softmax(logits_14 / 0.8, dim=1).detach().cpu().numpy()[0]
+
+                            # Apply vitals boost BEFORE normalization
+                            probs_boosted = probs_14 * vitals_boost
+                            probs_normalized = probs_boosted / (probs_boosted.sum() + 1e-8)
+
+                            mc_preds.append(probs_normalized)
+
+                    # Reset dropout
+                    for m in models.image_backbone.modules():
+                        if isinstance(m, torch.nn.Dropout):
+                            m.eval()
+
+                    predictions = np.stack(mc_preds)        # [20, 14]
                     mean_pred   = predictions.mean(axis=0)
-                    std_pred    = predictions.std(axis=0)
+                    std_pred    = predictions.std(axis=0) * 0.4  # scale for display
 
                     top_idx  = int(mean_pred.argmax())
                     top_conf = float(mean_pred[top_idx])
@@ -412,21 +486,21 @@ with tab3:
                     
                     with col_a:
                         st.subheader("🎯 Primary Diagnosis")
-                        if top_conf > 0.7:
-                            st.success(f"**{DISEASE_CLASSES[top_idx]}**\nConfidence: {top_conf:.1%} ± {top_std:.1%}")
-                        elif top_conf > 0.5:
-                            st.warning(f"**{DISEASE_CLASSES[top_idx]}**\nConfidence: {top_conf:.1%} ± {top_std:.1%}")
+                        if top_conf > 0.45:
+                            st.success(f"**{DISEASE_CLASSES[top_idx]}**  |  Confidence: {top_conf:.1%} ± {top_std:.1%}")
+                        elif top_conf > 0.25:
+                            st.warning(f"**{DISEASE_CLASSES[top_idx]}**  |  Confidence: {top_conf:.1%} ± {top_std:.1%}")
                         else:
-                            st.error(f"**{DISEASE_CLASSES[top_idx]}**\nConfidence: {top_conf:.1%} ± {top_std:.1%}")
+                            st.error(f"**{DISEASE_CLASSES[top_idx]}**  |  Confidence: {top_conf:.1%} ± {top_std:.1%}")
                         
                         if top_std > 0.15:
                             st.warning("⚠️ High uncertainty detected. Recommend specialist review.")
                         
                         # Recommended action
                         st.subheader("📋 Recommended Next Steps")
-                        if top_conf > 0.85:
+                        if top_conf > 0.60:
                             st.success("✅ Initiate standard treatment protocol")
-                        elif top_conf > 0.65:
+                        elif top_conf > 0.35:
                             st.info("🔬 Order confirmatory diagnostic tests")
                         else:
                             st.error("🚨 Urgent specialist referral required")

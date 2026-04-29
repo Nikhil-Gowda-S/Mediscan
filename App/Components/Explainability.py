@@ -10,11 +10,14 @@ class GradCAMOverlay:
         gradients = []
         activations = []
 
-        # Try denseblock4 first, fall back to denseblock3
+        # Target the LAST CONV layer inside denseblock4 for maximum spatial detail
         try:
-            target_layer = model.features.denseblock4
+            target_layer = model.features.denseblock4.denselayer16.conv2
         except AttributeError:
-            target_layer = list(model.features.children())[-2]
+            try:
+                target_layer = model.features.denseblock4
+            except AttributeError:
+                target_layer = list(model.features.children())[-2]
 
         def forward_hook(module, input, output):
             activations.append(output.detach().clone())
@@ -52,20 +55,21 @@ class GradCAMOverlay:
             
             # Weighted sum of activations
             cam = (weights * act).sum(dim=1).squeeze()  # [H, W]
-            cam = F.relu(torch.tensor(cam.numpy())).numpy()
+            cam_np = cam.detach().cpu().numpy()
+            cam_np = np.maximum(cam_np, 0)  # ReLU in numpy — avoids tensor issues
 
             # Check if cam is all zeros
-            if cam.max() == 0:
+            if cam_np.max() == 0:
                 # Fallback: use raw activation energy
-                cam = act.squeeze().mean(dim=0).cpu().numpy()
-                cam = np.maximum(cam, 0)
+                cam_np = act.squeeze().mean(dim=0).cpu().numpy()
+                cam_np = np.maximum(cam_np, 0)
 
             # Normalize to 0-1
-            cam_min, cam_max = cam.min(), cam.max()
+            cam_min, cam_max = cam_np.min(), cam_np.max()
             if cam_max > cam_min:
-                cam = (cam - cam_min) / (cam_max - cam_min)
+                cam_np = (cam_np - cam_min) / (cam_max - cam_min)
             else:
-                cam = np.ones_like(cam) * 0.5
+                cam_np = np.ones_like(cam_np) * 0.5
 
             # Get original image dimensions
             if isinstance(original_image, Image.Image):
@@ -83,7 +87,7 @@ class GradCAMOverlay:
             orig_np = cv2.resize(orig_np, (orig_w, orig_h))
 
             # Resize CAM to match image
-            cam_resized = cv2.resize(cam.astype(np.float32), (orig_w, orig_h))
+            cam_resized = cv2.resize(cam_np.astype(np.float32), (orig_w, orig_h))
             
             # Apply JET colormap
             cam_uint8 = np.uint8(255 * cam_resized)
