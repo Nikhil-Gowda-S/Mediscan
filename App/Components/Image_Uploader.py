@@ -30,11 +30,30 @@ class ImageUploader:
     def __init__(self, backbone: torch.nn.Module):
         self.backbone = backbone
 
+    def validate_xray(self, pil_image: Image.Image) -> bool:
+        """
+        Detects if an image is colored (non-Xray) by checking channel variance.
+        X-rays are grayscale; R, G, and B values should be nearly identical.
+        """
+        img_np = np.array(pil_image.convert("RGB"))
+        # Calculate mean absolute difference between R, G, and B
+        rg_diff = np.abs(img_np[:,:,0].astype(int) - img_np[:,:,1].astype(int)).mean()
+        gb_diff = np.abs(img_np[:,:,1].astype(int) - img_np[:,:,2].astype(int)).mean()
+        
+        # If mean difference > 8, it's likely a colored photo (natural image)
+        if (rg_diff + gb_diff) > 8:
+            return False
+        return True
+
     def process(self, image_file):
         if hasattr(image_file, "seek"):
             image_file.seek(0)
 
         original_pil = Image.open(image_file).convert("RGB")
+        
+        # ── Step 0: Validation ─────────────────────────────────────────────
+        if not self.validate_xray(original_pil):
+            raise ValueError("Invalid photo: The uploaded image appears to be a colored photo. Please upload a grayscale Chest X-Ray.")
         
         # Preserve aspect ratio then crop — critical for spatial feature integrity
         transform = transforms.Compose([

@@ -306,10 +306,20 @@ with tab1:
     if "sample_image" in st.session_state and not uploaded_file:
         st.image(st.session_state["sample_image"], caption="Sample X-Ray loaded", use_container_width=True)
         st.session_state["image_source"] = st.session_state["sample_image"]
-    elif uploaded_file:
-        st.image(uploaded_file, caption="Uploaded X-Ray", use_container_width=True)
-        st.session_state["image_source"] = uploaded_file
-        st.success("✅ X-Ray uploaded successfully")
+    if uploaded_file:
+        try:
+            from PIL import Image as PILImage
+            test_img = PILImage.open(uploaded_file)
+            uploader_temp = ImageUploader(models.image_backbone)
+            if not uploader_temp.validate_xray(test_img):
+                st.error("❌ **Invalid Photo Detected**: Please upload a grayscale Chest X-Ray. Colored photos are not supported.")
+                st.session_state["image_source"] = None
+            else:
+                st.image(uploaded_file, caption="Uploaded X-Ray", use_container_width=True)
+                st.session_state["image_source"] = uploaded_file
+                st.success("✅ X-Ray uploaded successfully")
+        except Exception as e:
+            st.error(f"Error checking file: {e}")
 
 with tab2:
     st.header("Step 2: Enter Patient Vitals")
