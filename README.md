@@ -1,7 +1,7 @@
 # 🏥 MediScan AI — 60-Second Diagnosis Layer
 
 **Multimodal AI Diagnostic Support for Rural Healthcare**  
-*Built for the VCE ML Hackathon 2026*
+*Built for the VVCE ML Hackathon 2026*
 
 MediScan AI is an advanced medical decision support system designed to bridge the healthcare gap in resource-constrained environments. Unlike standard "black-box" AI models, MediScan fuses **Chest X-Ray analysis** with **Patient Vitals** and **Plain-Language Symptoms** to provide a realistic, explainable, and clinically grounded diagnosis.
 

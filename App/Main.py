@@ -228,7 +228,7 @@ if "patient_history" not in st.session_state:
     st.session_state["patient_history"] = []
 
 st.title("🏥 MediScan AI — 60-Second Diagnosis Layer")
-st.markdown("**Multimodal AI Diagnostic Support for Rural Healthcare** | VCE ML Hackathon 2026")
+st.markdown("**Multimodal AI Diagnostic Support for Rural Healthcare** | VVCE ML Hackathon 2026")
 st.warning("⚠️ For research and demonstration purposes only. Not for clinical use.")
 
 @st.cache_resource
@@ -241,7 +241,7 @@ with st.spinner("Loading AI models..."):
 # Sidebar
 with st.sidebar:
     st.markdown("### 🏥 MediScan AI")
-    st.markdown("**VCE ML Hackathon 2026**")
+    st.markdown("**VVCE ML Hackathon 2026**")
     st.divider()
     
     st.markdown("#### 🤖 Model Stack")
@@ -597,4 +597,4 @@ with tab3:
                     st.exception(e)
 
 st.divider()
-st.caption("MediScan AI v1.0 | Built for VCE ML Hackathon 2026 | For demonstration purposes only")
+st.caption("MediScan AI v1.0 | Built for VVCE ML Hackathon 2026 | For demonstration purposes only")
