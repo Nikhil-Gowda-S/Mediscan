@@ -1,76 +1,71 @@
-# MediScan AI - The 60-Second Diagnosis Layer
+# 🏥 MediScan AI — 60-Second Diagnosis Layer
 
-## Overview
-MediScan AI is a multimodal AI application designed for rural healthcare, providing rapid diagnostic support using chest X-rays, recorded patient symptoms, and vital signs.
+**Multimodal AI Diagnostic Support for Rural Healthcare**  
+*Built for the VCE ML Hackathon 2026*
 
-## Features
-- **X-Ray Analysis**: DenseNet-121 backbone trained on medical imagery.
-- **Symptom Transcription**: OpenAI Whisper for speech-to-text.
-- **Clinical NLP**: BioBERT for processing medical symptoms.
-- **Multimodal Fusion**: Cross-modal attention mechanism to fuse image, audio, and vital features.
-- **Explainability**: Grad-CAM visualization to highlight diagnostic regions in X-rays.
-- **Uncertainty Quantification**: Monte Carlo Dropout for gauging diagnostic confidence.
+MediScan AI is an advanced medical decision support system designed to bridge the healthcare gap in resource-constrained environments. Unlike standard "black-box" AI models, MediScan fuses **Chest X-Ray analysis** with **Patient Vitals** and **Plain-Language Symptoms** to provide a realistic, explainable, and clinically grounded diagnosis.
 
-## Project Structure
-```
-Mediscan-Ai/
-├── App/
-│   ├── Main.py
-│   ├── Components/
-│   │   ├── Image_Uploader.py
-│   │   ├── Audio_Recorder.py
-│   │   ├── Results_Display.py
-│   │   └── Explainability.py
-│   ├── Models/
-│   │   ├── Image_Encoder.py
-│   │   ├── Audio_Encoder.py
-│   │   ├── Fusion_Classifier.py
-│   └── Utils/
-│       └── Model_Loader.py
-├── Data/
-│   └── Samples/
-├── Requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-└── README.md
-```
+---
 
-## Getting Started
+## 🚀 Key Features
 
-### 📦 Input Requirements
-To test the project's multimodal capabilities, prepare the following inputs:
-- **Chest X-Ray**: A grayscale image (JPG/PNG). Recommended size `224x224`. 
-  - *Demo sample*: Search for "Chest X-Ray Normal" or "Pneumonia X-Ray" on Google Images.
-- **Microphone Input**: Use the "Record Symptoms" button to speak symptoms like *"I have a sharp pain in my chest and a dry cough"*.
-- **Patient Vitals**: You will need to input numeric values for Temperature, Blood Pressure, and SpO2.
+### 🧠 1. Multi-Modal Fusion Engine
+MediScan doesn't rely solely on images. It integrates:
+- **Vision**: Fine-tuned CheXNet (DenseNet-121) for 14 chest pathologies.
+- **Vitals**: Real-time analysis of SpO2, Temperature, and BP.
+- **NLP**: Symptom-to-pathology mapping from patient descriptions.
 
-### 🛠️ Local Setup
-1. **Environment**:
+### 📊 2. Reliability & Realism
+- **Monte Carlo Dropout**: 15x stochastic sampling to measure model uncertainty.
+- **Logit Adjustment**: Mathematical debiasing to handle the 80:1 class imbalance in the NIH dataset.
+- **Variance-Aware Confidence**: Confidence scores that drop when the model is confused, ensuring "believable" AI.
+
+### 🔬 3. Trust through Explainability
+- **Grad-CAM Localization**: High-resolution spatial heatmaps (norm5) that highlight pathology hotspots.
+- **Clinical Triage**: Integrated emergency referral scoring (Critical/Moderate/Stable).
+
+---
+
+## 🛠️ Tech Stack
+- **Framework**: Streamlit (Dashboard)
+- **Deep Learning**: PyTorch, Torchvision
+- **Explainability**: Grad-CAM (Custom Implementation)
+- **Visualization**: Plotly, OpenCV
+- **Reporting**: FPDF (PDF Diagnostics), python-pptx (Pitch Deck Generation)
+
+---
+
+## 📦 Installation & Setup
+
+1. **Clone the repository:**
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # Windows: venv\Scripts\activate
+   git clone https://github.com/Nikhil-Gowda-S/Mediscan.git
+   cd Mediscan
    ```
-2. **Install Dependencies**:
+
+2. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
-3. **Run the application**:
+
+3. **Run the application:**
    ```bash
    streamlit run App/Main.py
    ```
 
-### 🐳 Docker (Recommended for Consistency)
-```bash
-docker-compose up --build
-```
+---
 
-### ⚙️ Troubleshooting
-- **First Run**: The app will download model weights (~500MB+). Ensure a stable internet connection.
-- **GPU**: If a CUDA-compatible GPU is available, the app will automatically use it for 10x faster inference.
-- **Mock Mode**: If a model fails to load, the app switches to **Demo Mode** with mock encoders to ensure the UI remains interactive.
+## 📂 Project Structure
+- `App/Main.py`: Primary interface and inference orchestration.
+- `App/Utils/Model_Loader.py`: Backbone initialization and weight loading.
+- `App/Components/Explainability.py`: Grad-CAM implementation.
+- `App/Components/Image_Uploader.py`: Aspect-ratio preserving preprocessing.
+- `App/Models/`: Fine-tuned weights and architecture definitions.
 
-## ✨ Advanced Features Added
-- **Patient Portal**: Simulated patient records and vital history tracking.
-- **High-Precision Fusion**: Cross-attention mechanism between clinical text and visual features.
-- **Uncertainty Quantification**: Monte Carlo Dropout for gauging diagnostic risk.
-- **Explainable AI (XAI)**: Grad-CAM heatmap visualization.
+---
+
+## ⚕️ Disclaimer
+MediScan AI is a research prototype intended for demonstration and hackathon purposes. It is not a substitute for professional medical advice, diagnosis, or treatment.
+
+---
+**MediScan AI v1.0** | *Empowering rural healthcare through intelligent multimodal fusion.*

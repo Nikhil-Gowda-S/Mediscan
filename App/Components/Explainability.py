@@ -10,12 +10,11 @@ class GradCAMOverlay:
         gradients = []
         activations = []
 
-        # Use full denseblock4 for rich 7x7 spatial activation maps
-        # denselayer16.conv2 is 1x1 — produces poor heatmaps
+        # Target norm5 — the absolute final feature map before pooling
         try:
-            target_layer = model.features.denseblock4
+            target_layer = model.features.norm5
         except AttributeError:
-            target_layer = list(model.features.children())[-2]
+            target_layer = list(model.features.children())[-1]
 
         def forward_hook(module, input, output):
             activations.append(output.detach().clone())
@@ -33,15 +32,20 @@ class GradCAMOverlay:
             model.zero_grad()
             img = image_tensor.float().clone().detach().requires_grad_(True)
             
-            # Must enable grad even if caller used no_grad context
             with torch.enable_grad():
-                # Full forward pass through DenseNet manually
+                # Explicitly recreate the forward pass to extract LOGITS (pre-sigmoid)
+                # model.classifier is Sequential(Linear, ReLU, Dropout, Linear, Sigmoid)
                 features_out = model.features(img)
-                pooled = F.adaptive_avg_pool2d(features_out, (1, 1))
+                # Use non-inplace ReLU to preserve hook integrity
+                features_relu = F.relu(features_out, inplace=False)
+                pooled = F.adaptive_avg_pool2d(features_relu, (1, 1))
                 flat = torch.flatten(pooled, 1)
-                logits = model.classifier(flat)
+                
+                # Take all layers except the final Sigmoid (last element)
+                logits_module = model.classifier[:-1]
+                logits = logits_module(flat)
 
-                # Backward on target class score
+                # Backward on target class score (using logits for strong gradients)
                 score = logits[0, target_class % logits.shape[1]]
                 score.backward()
 
@@ -55,8 +59,8 @@ class GradCAMOverlay:
             weights = grad.mean(dim=[2, 3], keepdim=True)  # [1, C, 1, 1]
             
             # Weighted sum of activations
-            cam = (weights * act).sum(dim=1).squeeze()  # [7, 7]
-            # If squeeze removed too many dims, restore 2D
+            cam = (weights * act).sum(dim=1).squeeze()  # [H, W]
+            # Handle potential squeeze-to-scalar or squeeze-to-1D
             if len(cam.shape) == 0:
                 cam = cam.unsqueeze(0).unsqueeze(0)
             elif len(cam.shape) == 1:
@@ -95,15 +99,18 @@ class GradCAMOverlay:
             # Resize CAM to match image
             cam_resized = cv2.resize(cam_np.astype(np.float32), (orig_w, orig_h))
             
+            # Sharpen CAM for better localization
+            cam_resized = np.power(cam_resized, 1.5) 
+            
             # Apply JET colormap
             cam_uint8 = np.uint8(255 * cam_resized)
             heatmap_bgr = cv2.applyColorMap(cam_uint8, cv2.COLORMAP_JET)
             heatmap_rgb = cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
 
-            # Blend with original
+            # Blend with original (Higher alpha for original to keep context)
             orig_float = orig_np.astype(np.float32)
             heat_float = heatmap_rgb.astype(np.float32)
-            blended = (0.55 * orig_float + 0.45 * heat_float).astype(np.uint8)
+            blended = (0.65 * orig_float + 0.35 * heat_float).astype(np.uint8)
 
             return Image.fromarray(blended)
 

@@ -332,19 +332,33 @@ with tab2:
         height=100
     )
 
-    CRITICAL_KEYWORDS = [
-        'chest pain', 'cannot breathe', 'difficulty breathing', 'breathless',
-        'coughing blood', 'hemoptysis', 'severe', 'emergency', 'unconscious',
-        'high fever', 'rapid breathing', 'blue lips', 'cyanosis'
-    ]
+    SYMPTOM_MAP = {
+        'chest pain': ['Cardiomegaly', 'Pneumothorax', 'Effusion', 'Mass'],
+        'breathless': ['Edema', 'Effusion', 'Atelectasis', 'Emphysema', 'Pneumothorax'],
+        'difficulty breathing': ['Edema', 'Effusion', 'Atelectasis', 'Emphysema'],
+        'fever': ['Consolidation', 'Infiltration', 'Effusion'],
+        'cough': ['Consolidation', 'Infiltration', 'Nodule', 'Mass'],
+        'blood': ['Mass', 'Nodule', 'Infiltration'],
+        'weight loss': ['Mass'],
+        'sharp pain': ['Pneumothorax', 'Effusion'],
+        'fatigue': ['Cardiomegaly', 'Fibrosis'],
+    }
 
     if symptom_text:
-        found = [kw for kw in CRITICAL_KEYWORDS if kw.lower() in symptom_text.lower()]
-        if found:
-            st.error(f"⚠️ Critical symptom keywords detected: {', '.join(found)}")
-            st.session_state["critical_symptoms"] = True
+        found_symptoms = []
+        symptom_boost_targets = []
+        for kw, targets in SYMPTOM_MAP.items():
+            if kw.lower() in symptom_text.lower():
+                found_symptoms.append(kw)
+                symptom_boost_targets.extend(targets)
+        
+        if found_symptoms:
+            st.error(f"⚠️ Clinical symptoms detected: {', '.join(found_symptoms)}")
+            st.session_state["symptom_boost_targets"] = list(set(symptom_boost_targets))
+            st.session_state["critical_symptoms"] = any(kw in ['blood', 'sharp pain', 'chest pain'] for kw in found_symptoms)
         else:
-            st.success("✅ No critical symptom keywords detected")
+            st.success("✅ No high-risk symptom keywords detected")
+            st.session_state["symptom_boost_targets"] = []
             st.session_state["critical_symptoms"] = False
         st.session_state["symptom_text"] = symptom_text
 
@@ -363,26 +377,24 @@ with tab3:
                     uploader = ImageUploader(models.image_backbone)
                     image_features, attn_features, image_tensor, original_image = \
                         uploader.process(st.session_state["image_source"])
-                    image_features = image_features.to(models.device)
                     image_tensor = image_tensor.to(models.device)
 
-                    # ── Step 2: Vitals ────────────────────────────────────────────────
+                    # ── Step 2: Vitals & Symptoms ─────────────────────────────────────
                     vitals = st.session_state.get("vitals", [37.0, 120, 80, 98])
                     temp, sys_bp, dia_bp, spo2 = vitals
+                    symptom_targets = st.session_state.get("symptom_boost_targets", [])
 
-                    # ── Step 3: Get raw sigmoid probabilities from trained model ──────
-                    # Enable MC dropout for uncertainty
+                    # ── Step 3: Get raw sigmoid probabilities ───────────────────────
                     for m in models.image_backbone.modules():
                         if isinstance(m, torch.nn.Dropout):
                             m.train()
-                            m.p = 0.08
+                            m.p = 0.1  # Higher dropout for better uncertainty
 
                     mc_raw = []
                     with torch.no_grad():
-                        for _ in range(20):
+                        for _ in range(15):
                             feat = models.image_backbone.features(image_tensor)
-                            pooled = torch.nn.functional.adaptive_avg_pool2d(
-                                feat, (1, 1))
+                            pooled = torch.nn.functional.adaptive_avg_pool2d(feat, (1, 1))
                             flat = torch.flatten(pooled, 1)
                             probs = models.image_backbone.classifier(flat)
                             mc_raw.append(probs.cpu().numpy()[0])
@@ -391,70 +403,63 @@ with tab3:
                         if isinstance(m, torch.nn.Dropout):
                             m.eval()
 
-                    mc_raw = np.stack(mc_raw)           # [20, 14]
-                    raw_mean = mc_raw.mean(axis=0)      # [14] sigmoid probs
-                    raw_std  = mc_raw.std(axis=0)       # [14]
+                    mc_raw = np.stack(mc_raw)
+                    raw_mean = mc_raw.mean(axis=0)
+                    raw_std  = mc_raw.std(axis=0)
 
-                    # ── Step 4: Apply class-imbalance correction ──────────────────────
-                    # The model is biased toward No Finding (3044 samples vs 38 Fibrosis)
-                    # We correct this by dividing by class frequency (prior probability)
+                    # ── Step 4: Logit Adjustment & Sharpening ────────────────────────
+                    eps = 1e-8
+                    logits = np.log(raw_mean / (1 - raw_mean + eps) + eps)
+                    
+                    # Apply inverse-frequency adjustment
                     class_weights_np = models.class_weights.cpu().numpy()
+                    adjusted_logits = logits + np.log(class_weights_np * 14.0 + eps)
+                    
+                    # Moderate Sharpening (T=0.75 for realism)
+                    temperature = 0.75 
+                    sharpened_logits = adjusted_logits / temperature
+                    
+                    # Convert back to probabilities
+                    corrected = 1 / (1 + np.exp(-sharpened_logits))
+                    corrected = corrected / (corrected.sum() + eps)
 
-                    # Multiply raw probs by inverse-frequency weights
-                    # This boosts rare disease predictions relative to No Finding
-                    corrected = raw_mean * class_weights_np * 14.0
-                    # Re-normalize to sum to 1
-                    corrected = corrected / (corrected.sum() + 1e-8)
-
-                    # ── Step 5: Apply vitals boost on top of corrected probs ─────────
+                    # ── Step 5: Multi-modal Fusion ────────────────────────────────────
                     disease_idx = {d: i for i, d in enumerate(DISEASE_CLASSES)}
                     boost = np.ones(14)
 
-                    # Low SpO2 — respiratory conditions
-                    if spo2 < 90:
-                        for d in ['Edema', 'Consolidation', 'Atelectasis',
-                                  'Effusion', 'Emphysema', 'Pneumothorax']:
-                            boost[disease_idx[d]] *= 3.0
-                        boost[disease_idx['No Finding']] *= 0.1
-                    elif spo2 < 94:
-                        for d in ['Edema', 'Consolidation',
-                                  'Effusion', 'Atelectasis']:
-                            boost[disease_idx[d]] *= 2.0
-                        boost[disease_idx['No Finding']] *= 0.3
-
-                    # High fever — infection
-                    if temp > 39.0:
-                        for d in ['Consolidation', 'Infiltration', 'Effusion']:
+                    if spo2 < 92:
+                        for d in ['Edema', 'Effusion', 'Pneumothorax', 'Atelectasis']:
                             boost[disease_idx[d]] *= 2.5
                         boost[disease_idx['No Finding']] *= 0.2
-                    elif temp > 38.0:
+                    
+                    if temp > 38.5:
                         for d in ['Consolidation', 'Infiltration']:
+                            boost[disease_idx[d]] *= 2.0
+                    
+                    for d in symptom_targets:
+                        if d in disease_idx:
                             boost[disease_idx[d]] *= 1.8
-                        boost[disease_idx['No Finding']] *= 0.4
-
-                    # High BP — cardiac
-                    if sys_bp > 160:
-                        for d in ['Cardiomegaly', 'Edema', 'Effusion']:
-                            boost[disease_idx[d]] *= 2.5
-                        boost[disease_idx['No Finding']] *= 0.2
-                    elif sys_bp > 140:
-                        for d in ['Cardiomegaly', 'Edema']:
-                            boost[disease_idx[d]] *= 1.8
-                        boost[disease_idx['No Finding']] *= 0.4
-
-                    # Normal vitals — allow No Finding
-                    if (96 <= spo2 <= 100 and 36.0 <= temp <= 37.5
-                            and 90 <= sys_bp <= 130 and 60 <= dia_bp <= 85):
-                        boost[disease_idx['No Finding']] *= 1.5
-
-                    # Apply boost and renormalize
+                    
                     boosted = corrected * boost
-                    mean_pred = boosted / (boosted.sum() + 1e-8)
+                    mean_pred = boosted / (boosted.sum() + eps)
+                    
+                    # REALISTIC CALIBRATION: Variance-Aware Confidence
+                    top_idx = int(mean_pred.argmax())
+                    raw_conf = mean_pred[top_idx]
+                    uncertainty = raw_std[top_idx] # MC Dropout variance
+                    
+                    # 1. Moderate scaling (conf^0.7)
+                    calibrated_conf = np.power(raw_conf, 0.7) 
+                    
+                    # 2. Uncertainty Penalty: Reduce confidence if model is inconsistent
+                    # If uncertainty is high (>0.1), we drop the believable confidence
+                    penalty = np.exp(-uncertainty * 2.0)
+                    final_conf = calibrated_conf * penalty
+                    
+                    mean_pred[top_idx] = final_conf
+                    mean_pred = mean_pred / (mean_pred.sum() + eps)
 
-                    # Scale std relative to corrected predictions
                     std_pred = raw_std * 0.3
-
-                    top_idx  = int(mean_pred.argmax())
                     top_conf = float(mean_pred[top_idx])
                     top_std  = float(std_pred[top_idx])
 

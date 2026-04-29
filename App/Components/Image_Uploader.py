@@ -36,9 +36,10 @@ class ImageUploader:
 
         original_pil = Image.open(image_file).convert("RGB")
         
-        # Keep RGB — trained model uses 3-channel input
+        # Preserve aspect ratio then crop — critical for spatial feature integrity
         transform = transforms.Compose([
-            transforms.Resize((224, 224)),
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(
                 [0.485, 0.456, 0.406],
