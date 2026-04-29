@@ -18,3 +18,12 @@ check_syntax.py
 take_screenshot.py
 demo_screenshot.png
 referrence.txt
+
+# Data and Models
+Data/
+App/Models/*.pth
+*.pth
+*.pdf
+scratch/
+diagnostic*.py
+

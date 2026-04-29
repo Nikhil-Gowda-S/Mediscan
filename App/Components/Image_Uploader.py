@@ -31,34 +31,32 @@ class ImageUploader:
         self.backbone = backbone
 
     def process(self, image_file):
-        """
-        Returns:
-            features      – 1024-d pooled backbone features  [1, 1024]
-            attn_features – 256-d projected features          [1, 256]
-            tensor        – preprocessed 1-ch tensor           [1,1,224,224]
-            original_pil  – original PIL Image (RGB)
-        """
         if hasattr(image_file, "seek"):
             image_file.seek(0)
 
         original_pil = Image.open(image_file).convert("RGB")
-
-        img_gray = original_pil.convert("L")
-        tensor = _TRANSFORM(img_gray).unsqueeze(0)
-
+        
+        # Keep RGB — trained model uses 3-channel input
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                [0.485, 0.456, 0.406],
+                [0.229, 0.224, 0.225]
+            ),
+        ])
+        
+        tensor = transform(original_pil).unsqueeze(0)
+        assert tensor.shape == torch.Size([1, 3, 224, 224]), \
+            f"Unexpected tensor shape: {tensor.shape}. Expected [1, 3, 224, 224]"
         device = next(self.backbone.parameters()).device
         tensor = tensor.to(device)
 
         with torch.no_grad():
-            spatial = self.backbone.features(tensor)          # [1, 1024, 7, 7]
+            spatial = self.backbone.features(tensor)
             features = torch.flatten(
-                F.adaptive_avg_pool2d(spatial, (1, 1)), 1
-            )                                                  # [1, 1024]
-            # Proper learned projection — not a slice
-            if not hasattr(self, '_proj'):
-                self._proj = torch.nn.Linear(1024, 256, bias=False).to(device)
-                torch.nn.init.orthogonal_(self._proj.weight)
-            with torch.no_grad():
-                attn_features = self._proj(features)
+                torch.nn.functional.adaptive_avg_pool2d(
+                    spatial, (1,1)), 1)
+            attn_features = features[:, :256]
 
         return features, attn_features, tensor, original_pil

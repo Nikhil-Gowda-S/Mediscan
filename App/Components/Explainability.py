@@ -10,14 +10,12 @@ class GradCAMOverlay:
         gradients = []
         activations = []
 
-        # Target the LAST CONV layer inside denseblock4 for maximum spatial detail
+        # Use full denseblock4 for rich 7x7 spatial activation maps
+        # denselayer16.conv2 is 1x1 — produces poor heatmaps
         try:
-            target_layer = model.features.denseblock4.denselayer16.conv2
+            target_layer = model.features.denseblock4
         except AttributeError:
-            try:
-                target_layer = model.features.denseblock4
-            except AttributeError:
-                target_layer = list(model.features.children())[-2]
+            target_layer = list(model.features.children())[-2]
 
         def forward_hook(module, input, output):
             activations.append(output.detach().clone())
@@ -26,7 +24,10 @@ class GradCAMOverlay:
             gradients.append(grad_output[0].detach().clone())
 
         fh = target_layer.register_forward_hook(forward_hook)
-        bh = target_layer.register_full_backward_hook(backward_hook)
+        try:
+            bh = target_layer.register_full_backward_hook(backward_hook)
+        except AttributeError:
+            bh = target_layer.register_backward_hook(backward_hook)
 
         try:
             model.zero_grad()
@@ -54,7 +55,12 @@ class GradCAMOverlay:
             weights = grad.mean(dim=[2, 3], keepdim=True)  # [1, C, 1, 1]
             
             # Weighted sum of activations
-            cam = (weights * act).sum(dim=1).squeeze()  # [H, W]
+            cam = (weights * act).sum(dim=1).squeeze()  # [7, 7]
+            # If squeeze removed too many dims, restore 2D
+            if len(cam.shape) == 0:
+                cam = cam.unsqueeze(0).unsqueeze(0)
+            elif len(cam.shape) == 1:
+                cam = cam.unsqueeze(0)
             cam_np = cam.detach().cpu().numpy()
             cam_np = np.maximum(cam_np, 0)  # ReLU in numpy — avoids tensor issues
 

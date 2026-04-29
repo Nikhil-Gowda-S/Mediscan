@@ -29,91 +29,68 @@ class ModelLoader:
         self.fusion_classifier = FusionClassifier().to(self.device).eval()
 
     def _load_image_backbone(self) -> nn.Module:
+        import os
         from torchvision import models
-        backbone = models.densenet121(weights="IMAGENET1K_V1")
 
-        # Adapt first conv for grayscale
-        orig_conv = backbone.features.conv0
-        new_conv = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        with torch.no_grad():
-            new_conv.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
-        backbone.features.conv0 = new_conv
-
-        # Build classifier using ACTUAL ImageNet weight structure
-        # Map 1000 ImageNet classes → 14 chest diseases using medical knowledge
-        # This mapping is deterministic and medically grounded
-        imagenet_to_chest = {
-            # ImageNet classes related to fluid/density → Edema, Consolidation, Effusion
-            'fluid_density':    ([i for i in range(900, 950)], ['Edema', 'Consolidation', 'Effusion']),
-            # ImageNet classes related to structure/shape → Cardiomegaly, Hernia, Mass
-            'structure':        ([i for i in range(400, 450)], ['Cardiomegaly', 'Hernia', 'Mass']),
-            # ImageNet classes related to texture/pattern → Fibrosis, Infiltration, Atelectasis
-            'texture':          ([i for i in range(200, 250)], ['Fibrosis', 'Infiltration', 'Atelectasis']),
-            # ImageNet classes related to air/space → Emphysema, Pneumothorax
-            'air_space':        ([i for i in range(0, 30)],    ['Emphysema', 'Pneumothorax']),
-            # General classes → Nodule, Pleural Thickening, No Finding
-            'general':          ([i for i in range(100, 130)], ['Nodule', 'Pleural Thickening', 'No Finding']),
-        }
-
-        orig_weights = backbone.classifier.weight.data  # [1000, 1024]
-
-        # Build the 14-class weight matrix from actual pretrained ImageNet weights
-        # Each disease gets a weighted combination of semantically related ImageNet neurons
-        chest_weights = torch.zeros(14, 1024)
-        chest_bias = torch.zeros(14)
-
-        DISEASE_CLASSES = [
-            'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Effusion',
-            'Emphysema', 'Fibrosis', 'Hernia', 'Infiltration', 'Mass',
-            'No Finding', 'Nodule', 'Pleural Thickening', 'Pneumothorax'
-        ]
-        disease_idx = {d: i for i, d in enumerate(DISEASE_CLASSES)}
-
-        # Assign pretrained ImageNet weight vectors to chest disease classes
-        disease_source_rows = {
-            'Atelectasis':       [200, 201, 202, 203, 210],
-            'Cardiomegaly':      [400, 401, 402, 410, 420],
-            'Consolidation':     [900, 901, 902, 910, 920],
-            'Edema':             [930, 931, 932, 933, 940],
-            'Effusion':          [950, 951, 952, 953, 960],
-            'Emphysema':         [0,   1,   2,   3,   10],
-            'Fibrosis':          [220, 221, 222, 230, 240],
-            'Hernia':            [450, 451, 452, 460, 470],
-            'Infiltration':      [250, 251, 252, 260, 270],
-            'Mass':              [480, 481, 482, 490, 499],
-            'No Finding':        [100, 101, 102, 110, 120],
-            'Nodule':            [130, 131, 132, 133, 140],
-            'Pleural Thickening':[150, 151, 152, 153, 160],
-            'Pneumothorax':      [20,  21,  22,  23,  24],
-        }
-
-        with torch.no_grad():
-            for disease, source_rows in disease_source_rows.items():
-                idx = disease_idx[disease]
-                # Average the pretrained ImageNet weights for the source rows
-                selected = orig_weights[source_rows]  # [5, 1024]
-                chest_weights[idx] = selected.mean(dim=0)
-
-        # Build new classifier using pretrained-derived weights
-        new_head = nn.Sequential(
-            nn.Linear(1024, 512),
+        model = models.densenet121(weights=None)
+        num_ftrs = model.classifier.in_features  # 1024
+        model.classifier = nn.Sequential(
+            nn.Linear(num_ftrs, 512),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(512, 14)
+            nn.Dropout(0.3),
+            nn.Linear(512, 14),
+            nn.Sigmoid()
         )
 
-        with torch.no_grad():
-            # First layer: PCA-like projection using SVD of pretrained weights
-            U, S, Vh = torch.linalg.svd(orig_weights, full_matrices=False)
-            new_head[0].weight.copy_(Vh[:512])  # Top 512 principal components
-            new_head[0].bias.zero_()
-            # Second layer: use medically-derived chest weights projected to 512-d
-            proj = chest_weights @ Vh[:512].T  # [14, 512]
-            new_head[3].weight.copy_(proj)
-            new_head[3].bias.copy_(chest_bias)
+        weights_path = "App/Models/chexnet_finetuned.pth"
 
-        backbone.classifier = new_head
-        return backbone.to(self.device).eval()
+        if os.path.exists(weights_path):
+            checkpoint = torch.load(
+                weights_path, map_location=self.device,
+                weights_only=False)
+            model.load_state_dict(checkpoint['state_dict'])
+            auc = checkpoint.get('auc', 'N/A')
+            print(f"Loaded trained CheXNet weights. Best AUC: {auc}")
+        else:
+            print("No trained weights found. Using ImageNet pretrained.")
+            model = models.densenet121(weights='IMAGENET1K_V1')
+            num_ftrs = model.classifier.in_features
+            model.classifier = nn.Sequential(
+                nn.Linear(num_ftrs, 512),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(512, 14),
+                nn.Sigmoid()
+            )
+
+        # Store class prior weights to correct for dataset imbalance
+        # NIH sample dataset counts — used to debias predictions
+        # No Finding=3044, Infiltration=503, Effusion=203, Atelectasis=192
+        # Nodule=144, Pneumothorax=114, Mass=99, Consolidation=72
+        # Pleural_Thickening=65, Cardiomegaly=50, Emphysema=42
+        # Edema=41, Fibrosis=38, Hernia=~10
+        class_counts = torch.tensor([
+            192.0,  # Atelectasis
+            50.0,   # Cardiomegaly
+            72.0,   # Consolidation
+            41.0,   # Edema
+            203.0,  # Effusion
+            42.0,   # Emphysema
+            38.0,   # Fibrosis
+            10.0,   # Hernia
+            503.0,  # Infiltration
+            99.0,   # Mass
+            3044.0, # No Finding
+            144.0,  # Nodule
+            65.0,   # Pleural Thickening
+            114.0,  # Pneumothorax
+        ])
+        # Inverse frequency weights — rare classes get boosted
+        self.class_weights = (1.0 / (class_counts + 1e-6))
+        self.class_weights = self.class_weights / self.class_weights.sum()
+        self.class_weights = self.class_weights.to(self.device)
+
+        return model.to(self.device).eval()
 
     def _build_chest_classifier(self) -> nn.Module:
         return self.image_backbone.classifier
